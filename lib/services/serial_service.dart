@@ -28,23 +28,89 @@ class SerialService {
       final availablePorts = SerialPort.availablePorts;
       return availablePorts.map((portName) {
         final port = SerialPort(portName);
-
         PortInfo portInfo;
+
         try {
+          // Standard port bilgileri
+          final description = port.description ?? '';
+          final manufacturer = port.manufacturer ?? '';
+          final productName = port.productName ?? '';
+          final serialNumber = port.serialNumber ?? '';
+
+          // Ek bilgiler için bir map oluştur
+          final additionalInfo = <String, String>{};
+
+          // Transport layer bilgisi
+          try {
+            additionalInfo['Transport'] = port.transport.toString();
+          } catch (e) {
+            print('Transport bilgisi alınamadı: $e');
+          }
+
+          // USB device bilgileri (eğer USB ise)
+          if (port.transport == SerialPortTransport.usb) {
+            try {
+              additionalInfo['USB Bus Number'] = port.busNumber.toString();
+              additionalInfo['USB Device Number'] = port.deviceNumber.toString();
+            } catch (e) {
+              print('USB bilgileri alınamadı: $e');
+            }
+          }
+
+          // Port ayarlarını al
+          try {
+            final config = port.config;
+            additionalInfo['Baud Rate'] = config.baudRate.toString();
+            additionalInfo['Data Bits'] = config.bits.toString();
+            additionalInfo['Stop Bits'] = config.stopBits.toString();
+            additionalInfo['Parity'] = config.parity.toString();
+            // Flow Control için config.setFlowControl() kullanıyoruz
+            try {
+              additionalInfo['Flow Control'] = SerialPortFlowControl.none.toString();
+            } catch (e) {
+              print('Flow control bilgisi alınamadı: $e');
+            }
+          } catch (e) {
+            print('Port ayarları alınamadı: $e');
+          }
+
+          // VendorId ve ProductId için try-catch bloğu
+          int vid = 0;
+          int pid = 0;
+          try {
+            final vidString = port.vendorId.toString();
+            final pidString = port.productId.toString();
+            vid = int.tryParse(vidString) ?? 0;
+            pid = int.tryParse(pidString) ?? 0;
+          } catch (e) {
+            print('VID/PID bilgisi alınamadı: $e');
+          }
+
           portInfo = PortInfo(
             name: portName,
-            description: port.description.toString(),
-            manufacturer: port.manufacturer.toString(),
-            productName: port.productName.toString(),
-            serialNumber: port.serialNumber.toString(),
-            vendorId: port.vendorId.toString(),
-            productId: port.productId.toString(),
+            description: description,
+            manufacturer: manufacturer,
+            productName: productName,
+            serialNumber: serialNumber,
+            vendorId: vid,
+            productId: pid,
+            portType: port.transport.toString(),
+            subsystem: '',
+            baudRate: port.config.baudRate,
+            isOpen: port.isOpen,
+            additionalInfo: additionalInfo,
           );
         } catch (e) {
-          print('Port bilgisi alınamadı: $e');
+          print('Port bilgisi alınırken hata: $e');
           portInfo = PortInfo(name: portName);
         } finally {
-          port.dispose();
+          try {
+            if (!port.isOpen) {
+              port.dispose();
+            }
+          } catch (e) {
+            print('Port dispose edilirken hata: $e');
+          }
         }
 
         return portInfo;

@@ -439,36 +439,71 @@ class PortSelectionDialog extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // Port durumu için indikatör
+                  Icon(
+                    port.isOpen ? Icons.link : Icons.link_off,
+                    size: 16,
+                    color: port.isOpen ? Colors.green : Colors.grey,
+                  ),
                 ],
               ),
-              if (port.productName.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text('Ürün: ${port.productName}'),
-              ],
-              if (port.manufacturer.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text('Üretici: ${port.manufacturer}'),
-              ],
-              if (port.description.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  'Açıklama: ${port.description}',
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 4),
-              Text(
-                'VID: 0x${port.vendorId} '
-                    'PID: 0x${port.productId}',
+              const SizedBox(height: 8),
+              DefaultTextStyle(
                 style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: port.getDetailedInfo()
+                      .split('\n')
+                      .map((line) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(line),
+                  ))
+                      .toList(),
                 ),
               ),
+              if (port.additionalInfo.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ExpansionTile(
+                  title: const Text(
+                    'Detaylı Bilgiler',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  children: port.additionalInfo.entries.map((entry) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            '${entry.key}:',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              entry.value,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
   }
+  
 }
