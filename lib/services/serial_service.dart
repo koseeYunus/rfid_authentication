@@ -1,34 +1,75 @@
-// lib/services/serial_service.dart
 import 'package:flutter_libserialport/flutter_libserialport.dart';
+import '../models/port_info.dart';
 
+
+/// Seri port iletişimini yöneten servis sınıfı
 class SerialService {
+  /// Aktif seri port bağlantısı
   SerialPort? _port;
-  SerialPortReader? _reader;
-  bool _isConnected = false;
-  String _buffer = '';
-  List<int>? _lastReadNumbers; // Son okunan kart numaralarını tutmak için
-  DateTime? _lastReadTime;     // Son okuma zamanını tutmak için
 
-  List<String> getPorts() {
+  /// Seri port okuyucu
+  SerialPortReader? _reader;
+
+  /// Bağlantı durumu
+  bool _isConnected = false;
+
+  /// Veri tamponu
+  String _buffer = '';
+
+  /// Son okunan kart numaraları
+  List<int>? _lastReadNumbers;
+
+  /// Son okuma zamanı
+  DateTime? _lastReadTime;
+
+  /// Mevcut portları listeler
+  List<PortInfo> getPortsInfo() {
     try {
-      return SerialPort.availablePorts;
+      final availablePorts = SerialPort.availablePorts;
+      return availablePorts.map((portName) {
+        final port = SerialPort(portName);
+
+        PortInfo portInfo;
+        try {
+          portInfo = PortInfo(
+            name: portName,
+            description: port.description.toString(),
+            manufacturer: port.manufacturer.toString(),
+            productName: port.productName.toString(),
+            serialNumber: port.serialNumber.toString(),
+            vendorId: port.vendorId.toString(),
+            productId: port.productId.toString(),
+          );
+        } catch (e) {
+          print('Port bilgisi alınamadı: $e');
+          portInfo = PortInfo(name: portName);
+        } finally {
+          port.dispose();
+        }
+
+        return portInfo;
+      }).toList();
     } catch (e) {
       print('Port listesi alınamadı: $e');
       return [];
     }
   }
 
+  /// Seri porta bağlanır
   Future<void> connect({
     required String portName,
     required Function(String) onDataReceived,
   }) async {
     try {
+      // Yeni port bağlantısı oluştur
       _port = SerialPort(portName);
 
+      // Portu aç
       if (!_port!.openReadWrite()) {
         throw Exception('Port açılamadı');
       }
 
+      // Port ayarlarını yapılandır
       _port!.config = SerialPortConfig()
         ..baudRate = 9600
         ..bits = 8
@@ -36,10 +77,12 @@ class SerialService {
         ..parity = SerialPortParity.none
         ..setFlowControl(SerialPortFlowControl.none);
 
+      // Okuyucuyu başlat
       _reader = SerialPortReader(_port!);
       _isConnected = true;
       _buffer = '';
 
+      // Veri dinlemeyi başlat
       _reader!.stream.listen(
             (data) {
           _processData(data, onDataReceived);
@@ -57,6 +100,7 @@ class SerialService {
     }
   }
 
+  /// Gelen veriyi işler
   void _processData(List<int> data, Function(String) onDataReceived) {
     try {
       // Gelen veriyi buffer'a ekle
@@ -88,6 +132,7 @@ class SerialService {
     }
   }
 
+  /// Kart numaralarını parse eder
   List<int>? _parseCardNumbers(String message) {
     try {
       // "195 , 148 , 169 , 13 , 243" formatındaki veriyi parse et
@@ -107,6 +152,7 @@ class SerialService {
     return null;
   }
 
+  /// Kartın işlenip işlenmemesi gerektiğini kontrol eder
   bool _shouldProcessCard(List<int> numbers) {
     // Eğer son okuma yoksa veya farklı bir kart okunduysa
     if (_lastReadNumbers == null ||
@@ -123,6 +169,7 @@ class SerialService {
     return false;
   }
 
+  /// İki listenin eşitliğini kontrol eder
   bool listEquals(List<int> a, List<int> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
@@ -132,6 +179,7 @@ class SerialService {
     return true;
   }
 
+  /// Port bağlantısını kapatır
   void disconnect() {
     _isConnected = false;
     try {
@@ -153,6 +201,7 @@ class SerialService {
     }
   }
 
+  /// Bağlantı durumunu döndürür
   bool isConnected() {
     return _isConnected;
   }

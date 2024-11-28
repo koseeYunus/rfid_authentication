@@ -3,11 +3,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../bloc/rfid_bloc.dart';
 import '../models/card_data.dart';
+import '../models/port_info.dart';
 import '../services/serial_service.dart';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 
+/// RFID ekranını oluşturan ana widget
 class RfidScreen extends StatelessWidget {
   RfidScreen({super.key});
 
@@ -16,143 +16,141 @@ class RfidScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => RfidBloc(),
-      child: RfidView(serialService: _serialService),
+      create: (_) => RfidBloc(serialService: _serialService)
+        ..add(LoadPorts()),
+      child: const RfidView(),
     );
   }
 }
 
-class RfidView extends StatefulWidget {
-  final SerialService serialService;
+class RfidView extends StatelessWidget {
+  const RfidView({super.key});
 
-  const RfidView({
-    super.key,
-    required this.serialService,
-  });
-
-  @override
-  _RfidViewState createState() => _RfidViewState();
-}
-
-class _RfidViewState extends State<RfidView> {
-  String? _selectedPort;
-  bool _isConnecting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initPorts();
-  }
-
-  void _initPorts() {
-    final ports = widget.serialService.getPorts();
-    if (ports.isNotEmpty) {
-      setState(() => _selectedPort = ports.first);
-    }
-  }
-
-  Future<void> _connectToArduino() async {
-    if (_selectedPort == null) {
-      _showMessage('Lütfen bir port seçin');
-      return;
-    }
-
-    setState(() => _isConnecting = true);
-
-    try {
-      await widget.serialService.connect(
-        portName: _selectedPort!,
-        onDataReceived: (data) {
-          context.read<RfidBloc>().add(ProcessSerialData(data));
-        },
-      );
-      _showMessage('Bağlantı başarılı');
-    } catch (e) {
-      _showMessage('Bağlantı hatası: $e');
-    } finally {
-      setState(() => _isConnecting = false);
-    }
-  }
-
-  void _disconnectFromArduino() {
-    widget.serialService.disconnect();
-    setState(() {});
-    _showMessage('Bağlantı kapatıldı');
-    context.read<RfidBloc>().add(ResetRfid());
-  }
-
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(8),
-      ),
+  void _showPortSelectionDialog(BuildContext context, RfidPortsLoaded state) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        final bloc = context.read<RfidBloc>();
+        return PortSelectionDialog(
+          ports: state.ports,
+          selectedPort: state.selectedPort,
+          onPortSelected: (port) {
+            if (port != null) {
+              bloc.add(SelectPort(port)); // Bloc'u dışarıdan kullan
+            }
+            Navigator.pop(dialogContext);
+          },
+        );
+      },
     );
-  }
-
-  @override
-  void dispose() {
-    widget.serialService.disconnect();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ports = widget.serialService.getPorts();
-    final isConnected = widget.serialService.isConnected();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('RFID Kontrol Sistemi'),
         actions: [
-          if (isConnected)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                _disconnectFromArduino();
-                _initPorts();
-              },
-              tooltip: 'Portları Yenile',
-            ),
+          BlocBuilder<RfidBloc, RfidState>(
+            buildWhen: (previous, current) =>
+            current is RfidConnected ||
+                (previous is RfidConnected && current is! RfidConnected),
+            builder: (context, state) {
+              if (state is RfidConnected) {
+                return IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    context.read<RfidBloc>().add(DisconnectPort());
+                    context.read<RfidBloc>().add(LoadPorts());
+                  },
+                  tooltip: 'Portları Yenile',
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
         ],
       ),
-      body: Column(
-        children: [
-          _ConnectionPanel(
-            ports: ports,
-            selectedPort: _selectedPort,
-            isConnected: isConnected,
-            isConnecting: _isConnecting,
-            onPortSelected: (value) => setState(() => _selectedPort = value),
-            onConnect: _connectToArduino,
-            onDisconnect: _disconnectFromArduino,
-          ),
-          const Divider(height: 1),
-          const Expanded(
-            child: _CardReaderContent(),
-          ),
-        ],
+      body: BlocListener<RfidBloc, RfidState>(
+        listener: (context, state) {
+          if (state is RfidError) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(state.message)),
+            );
+          }
+        },
+        child: Column(
+          children: [
+            BlocBuilder<RfidBloc, RfidState>(
+              buildWhen: (previous, current) =>
+              current is BasePortState,
+              builder: (context, state) {
+                if (state is BasePortState) {  // BasePortState kullan
+                  return _ConnectionPanel(
+                    selectedPort: state.selectedPort,
+                    isConnected: state is RfidConnected,
+                    isConnecting: state is RfidConnecting,
+                    onPortSelectionRequest: () {
+                      if (state is RfidPortsLoaded) {
+                        _showPortSelectionDialog(context, state);
+                      }
+                    },
+                    onConnect: () => context.read<RfidBloc>().add(ConnectToPort()),
+                    onDisconnect: () => context.read<RfidBloc>().add(DisconnectPort()),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: BlocBuilder<RfidBloc, RfidState>(
+                buildWhen: (previous, current) {
+                  // BasePortState durumlarında kart bilgisi değiştiğinde rebuild et
+                  if (previous is BasePortState && current is BasePortState) {
+                    return previous.lastCardRead != current.lastCardRead;
+                  }
+                  // veya hata/başlangıç durumlarında
+                  return current is RfidInitial || current is RfidError;
+                },
+                builder: (context, state) {
+                  return _CardReaderContent(state: state);
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
 }
 
+/// Bağlantı panelini oluşturan widget
 class _ConnectionPanel extends StatelessWidget {
-  final List<String> ports;
-  final String? selectedPort;
+  /// Seçili port bilgisi
+  final PortInfo? selectedPort;
+
+  /// Bağlantı durumu
   final bool isConnected;
+
+  /// Bağlanma işlemi devam ediyor mu?
   final bool isConnecting;
-  final ValueChanged<String?> onPortSelected;
+
+  /// Port seçimi için callback
+  final VoidCallback onPortSelectionRequest;
+
+  /// Bağlanma işlemi için callback
   final VoidCallback onConnect;
+
+  /// Bağlantıyı kesme işlemi için callback
   final VoidCallback onDisconnect;
 
   const _ConnectionPanel({
-    required this.ports,
     required this.selectedPort,
     required this.isConnected,
     required this.isConnecting,
-    required this.onPortSelected,
+    required this.onPortSelectionRequest,
     required this.onConnect,
     required this.onDisconnect,
   });
@@ -166,6 +164,7 @@ class _ConnectionPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Bağlantı durumu göstergesi
             Text(
               'Bağlantı Durumu: ${isConnected ? 'Bağlı' : 'Bağlı Değil'}',
               style: TextStyle(
@@ -176,31 +175,28 @@ class _ConnectionPanel extends StatelessWidget {
             const SizedBox(height: 16),
             Row(
               children: [
+                // Port seçim butonu
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: selectedPort,
-                    hint: const Text('Port Seçin'),
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                  child: OutlinedButton(
+                    onPressed: isConnected ? null : onPortSelectionRequest,
+                    child: Text(
+                      selectedPort?.toString() ?? 'Port Seçin',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    items: ports.map((port) {
-                      return DropdownMenuItem(
-                        value: port,
-                        child: Text(port),
-                      );
-                    }).toList(),
-                    onChanged: isConnected ? null : onPortSelected,
                   ),
                 ),
                 const SizedBox(width: 16),
+                // Bağlan/Bağlantıyı Kes butonu
                 if (!isConnected)
                   ElevatedButton(
                     onPressed: isConnecting ? null : onConnect,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                     child: isConnecting
                         ? const SizedBox(
@@ -218,9 +214,12 @@ class _ConnectionPanel extends StatelessWidget {
                     onPressed: onDisconnect,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
-                    child: const Text('Bağlantıyı Kapat'),
+                    child: const Text('Bağlantıyı Kes'),
                   ),
               ],
             ),
@@ -231,64 +230,72 @@ class _ConnectionPanel extends StatelessWidget {
   }
 }
 
+/// Kart okuyucu içeriğini gösteren widget
 class _CardReaderContent extends StatelessWidget {
-  const _CardReaderContent();
+  final RfidState state;
+
+  const _CardReaderContent({required this.state});
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<RfidBloc, RfidState>(
-      builder: (context, state) {
-        return SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildStatusIcon(state),
-                  if (state is RfidCardRead && state.cardData.serialNumbers.isNotEmpty)
-                    _buildCardInfo(state.cardData),
-                ],
-              ),
-            ),
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildStatusIcon(),
+              if (state is BasePortState &&
+                  (state as BasePortState).lastCardRead != null &&
+                  (state as BasePortState).lastCardRead!.serialNumbers.isNotEmpty)
+                _buildCardInfo((state as BasePortState).lastCardRead!),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
-  Widget _buildStatusIcon(RfidState state) {
-    if (state is RfidLoading) {
+  Widget _buildStatusIcon() {
+    if (state is RfidConnecting) {
       return const CircularProgressIndicator();
     }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: _getStatusColor(state).withOpacity(0.1),
+        color: _getStatusColor().withOpacity(0.1),
       ),
       child: Icon(
-        _getStatusIcon(state),
+        _getStatusIcon(),
         size: 100,
-        color: _getStatusColor(state),
+        color: _getStatusColor(),
       ),
     );
   }
 
-  Color _getStatusColor(RfidState state) {
-    if (state is RfidCardRead && state.cardData.isAuthorized) {
-      return Colors.green;
-    } else if (state is RfidCardRead && !state.cardData.isAuthorized) {
+  Color _getStatusColor() {
+    if (state is BasePortState && (state as BasePortState).lastCardRead != null) {
+      final lastCard = (state as BasePortState).lastCardRead!;
+      return lastCard.isAuthorized ? Colors.green : Colors.red;
+    } else if (state is RfidConnected) {
+      return Colors.blue;
+    } else if (state is RfidError) {
       return Colors.red;
     }
     return Colors.grey;
   }
 
-  IconData _getStatusIcon(RfidState state) {
-    if (state is RfidCardRead && state.cardData.isAuthorized) {
-      return Icons.check_circle;
-    } else if (state is RfidCardRead && !state.cardData.isAuthorized) {
-      return Icons.error;
+  IconData _getStatusIcon() {
+    if (state is BasePortState && (state as BasePortState).lastCardRead != null) {
+      final lastCard = (state as BasePortState).lastCardRead!;
+      return lastCard.isAuthorized ? Icons.check_circle : Icons.error;
+    } else if (state is RfidConnected) {
+      return Icons.usb;
+    } else if (state is RfidError) {
+      return Icons.error_outline;
     }
     return Icons.credit_card;
   }
@@ -328,7 +335,138 @@ class _CardReaderContent extends StatelessWidget {
                 color: Colors.grey.shade600,
               ),
             ),
+            if (cardData.message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                cardData.message,
+                style: TextStyle(
+                  color: cardData.isAuthorized ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// Port seçim dialogunu oluşturan widget
+class PortSelectionDialog extends StatelessWidget {
+  final List<PortInfo> ports;
+  final PortInfo? selectedPort;
+  final ValueChanged<PortInfo?> onPortSelected;
+
+  const PortSelectionDialog({
+    Key? key,
+    required this.ports,
+    this.selectedPort,
+    required this.onPortSelected,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8, // Ekranın %80'i kadar yükseklik
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Port Seçimi',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: ports.map((port) => _buildPortItem(context, port)).toList(),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Kapat'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPortItem(BuildContext context, PortInfo port) {
+    final isSelected = selectedPort?.name == port.name;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+      child: InkWell(
+        onTap: () {
+          onPortSelected(port);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.usb,
+                    color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      port.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (port.productName.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('Ürün: ${port.productName}'),
+              ],
+              if (port.manufacturer.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('Üretici: ${port.manufacturer}'),
+              ],
+              if (port.description.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Açıklama: ${port.description}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                'VID: 0x${port.vendorId} '
+                    'PID: 0x${port.productId}',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
