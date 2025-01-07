@@ -13,6 +13,22 @@ class RfidScreen extends StatelessWidget {
 
   final SerialService _serialService = SerialService();
 
+  // Kullanılacak servis tipine göre değiştirilebilir
+  // final serialService = ArduinoSerialService();  // Arduino için
+  //final serialService = OSDPSerialService();     // OSDP okuyucu için
+
+  /*
+   @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (_) => RfidBloc(serialService: serialService)
+        ..add(LoadPorts()),
+      child: const RfidView(),
+    );
+  }
+}
+   */
+
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
